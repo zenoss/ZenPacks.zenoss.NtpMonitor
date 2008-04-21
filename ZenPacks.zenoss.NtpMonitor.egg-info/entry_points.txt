@@ -1,3 +1,0 @@
-[zenoss.zenpacks]
-ZenPacks.zenoss.NtpMonitor = ZenPacks.zenoss.NtpMonitor
-
