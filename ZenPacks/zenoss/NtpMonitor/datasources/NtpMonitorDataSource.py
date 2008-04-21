@@ -79,7 +79,7 @@ class NtpMonitorDataSource(ZenPackPersistence, RRDDataSource.RRDDataSource):
         return True
 
     def getCommand(self, context):
-        parts = ['check_http']
+        parts = ['check_ntp']
         if self.hostname:
             parts.append('-H %s' % self.hostname)
         if self.port:
