@@ -20,6 +20,7 @@ import Products.ZenModel.RRDDataSource as RRDDataSource
 from Products.ZenModel.ZenPackPersistence import ZenPackPersistence
 from AccessControl import ClassSecurityInfo, Permissions
 from Products.ZenUtils.ZenTales import talesCompile, getEngine
+from Products.ZenUtils.Utils import binPath
 
 
 class NtpMonitorDataSource(ZenPackPersistence, RRDDataSource.RRDDataSource):
@@ -79,7 +80,7 @@ class NtpMonitorDataSource(ZenPackPersistence, RRDDataSource.RRDDataSource):
         return True
 
     def getCommand(self, context):
-        parts = ['check_ntp']
+        parts = [[binPath('check_ntp')]
         if self.hostname:
             parts.append('-H %s' % self.hostname)
         if self.port:
@@ -91,8 +92,7 @@ class NtpMonitorDataSource(ZenPackPersistence, RRDDataSource.RRDDataSource):
         if self.critical:
             parts.append('-c %s' % self.critical)
         cmd = ' '.join(parts)
-        cmd = '$ZENHOME/libexec/' + \
-                    RRDDataSource.RRDDataSource.getCommand(self, context, cmd)
+        cmd = RRDDataSource.RRDDataSource.getCommand(self, context, cmd)
         return cmd
 
     def checkCommandPrefix(self, context, cmd):
