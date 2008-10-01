@@ -5,6 +5,9 @@
 <property type="text" id="description" mode="w" >
 Monitors NTP offset
 </property>
+<property type="string" id="targetPythonClass" mode="w" >
+Products.ZenModel.Device
+</property>
 <tomanycont id='datasources'>
 <object id='NtpMonitor' module='ZenPacks.zenoss.NtpMonitor.datasources.NtpMonitorDataSource' class='NtpMonitorDataSource'>
 <property select_variable="sourcetypes" type="selection" id="sourcetype" mode="w" >
