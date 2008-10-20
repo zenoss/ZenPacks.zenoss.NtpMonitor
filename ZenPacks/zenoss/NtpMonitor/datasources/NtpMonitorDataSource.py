@@ -83,8 +83,6 @@ class NtpMonitorDataSource(ZenPackPersistence, RRDDataSource.RRDDataSource):
         parts = [binPath('check_ntp')]
         if self.hostname:
             parts.append('-H %s' % self.hostname)
-        if self.port:
-            parts.append('-p %s' % self.port)
         if self.timeout:
             parts.append('-t %s' % self.timeout)
         if self.warning:

@@ -114,15 +114,6 @@
                 tal:content="here/hostname"/>
         </tr>
         <tr>
-            <td class="tableheader">Port</td>
-            <td class="tablevalues" tal:condition="editable">
-            <input class="tablevalues" type="text" name="port:int" size="10"
-                tal:attributes="value here/port" />
-            </td>
-          <td class="tablevalues" tal:condition="not:editable" 
-                tal:content="here/port"/>
-        </tr>
-        <tr>
             <td class="tableheader">Warning response time (seconds)</td>
             <td class="tablevalues" tal:condition="editable">
             <input class="tablevalues" type="text" 
