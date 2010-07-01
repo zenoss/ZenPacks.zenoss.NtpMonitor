@@ -39,6 +39,9 @@ ${dev/id}
 </property>
 <tomanycont id='datapoints'>
 <object id='offset' module='Products.ZenModel.RRDDataPoint' class='RRDDataPoint'>
+<property type="text" id="zendoc" mode="w" >
+The difference between the reference time and the system clock.
+</property>
 <property select_variable="rrdtypes" type="selection" id="rrdtype" mode="w" >
 GAUGE
 </property>
