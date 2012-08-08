@@ -29,7 +29,7 @@ NtpMonitor
 300
 </property>
 <property type="string" id="hostname" mode="w" >
-${dev/id}
+${dev/titleOrId}
 </property>
 <property type="int" id="port" mode="w" >
 123
