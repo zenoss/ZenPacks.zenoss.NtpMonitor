@@ -16,7 +16,6 @@ Defines datasource for NtpMonitor
 import Products.ZenModel.RRDDataSource as RRDDataSource
 from Products.ZenModel.ZenPackPersistence import ZenPackPersistence
 from AccessControl import ClassSecurityInfo, Permissions
-from Products.ZenUtils.ZenTales import talesCompile, getEngine
 from Products.ZenUtils.Utils import binPath
 
 
@@ -25,6 +24,8 @@ class NtpMonitorDataSource(ZenPackPersistence, RRDDataSource.RRDDataSource):
     ZENPACKID = 'ZenPacks.zenoss.NtpMonitor'
     NTP_MONITOR = 'NtpMonitor'
     
+    parser = 'Nagios'
+
     sourcetypes = (NTP_MONITOR,)
     sourcetype = NTP_MONITOR
 
@@ -77,9 +78,14 @@ class NtpMonitorDataSource(ZenPackPersistence, RRDDataSource.RRDDataSource):
         return True
 
     def getCommand(self, context):
-        parts = [binPath('check_ntp')]
+        parts = [binPath('check_ntp_peer')]
         if self.hostname:
             parts.append('-H %s' % self.hostname)
+        elif context.manageIp:
+            parts.append('-H %s' % context.manageIp)
+        else:
+            raise Exception("No host value for NTP check '%s'" % context.id)
+
         if self.timeout:
             parts.append('-t %s' % self.timeout)
         if self.warning:
