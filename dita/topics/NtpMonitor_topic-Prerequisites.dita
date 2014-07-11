@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE reference PUBLIC "urn:pubid:zenoss.com:doctypes:dita:dtd:reference" "reference.dtd">
+<reference id="d51e15"><title>Prerequisites</title><refbody><table>
+      <tgroup align="left" cols="2">
+        <thead>
+          <row>
+            <entry>Prerequisite</entry>
+
+            <entry>Restriction</entry>
+          </row>
+        </thead>
+
+        <tbody>
+          <row>
+            <entry><p>Product</p></entry>
+
+            <entry><p><ph conkeyref="names/platform"/> 4.x, Zenoss 2.2 or
+            higher</p></entry>
+          </row>
+
+          <row>
+            <entry><p>Required ZenPacks</p></entry>
+
+            <entry><p>ZenPacks.zenoss.NtpMonitor</p></entry>
+          </row>
+        </tbody>
+      </tgroup>
+    </table></refbody></reference>
