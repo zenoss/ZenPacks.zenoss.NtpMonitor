@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE reference PUBLIC "urn:pubid:zenoss.com:doctypes:dita:dtd:reference" "reference.dtd">
+<reference id="d51e72"><title>Enable Monitoring</title><refbody><section><p>The NTPMonitor template must be bound to the device class or device
+    you want to monitor.</p><ol>
+      <li>
+        <p>Select Infrastructure from the navigation bar.</p>
+      </li>
+
+      <li>
+        <p>Click the device name in the device list.</p>
+
+        <p>The device overview page appears.</p>
+      </li>
+
+      <li>
+        <p>Expand Monitoring Templates, and then select Device from the
+        left panel.</p>
+      </li>
+
+      <li>
+        <p>Select Bind Templates from the Action menu.</p>
+
+        <p>The Bind Templates dialog appears.</p>
+      </li>
+
+      <li>
+        <p>Add the NTPMonitor template to the list of selected templates,
+        and then click <b>Submit</b>.</p>
+
+        <p>The NTPMonitor template is added to the list of monitoring
+        templates. You can now start collecting the NTP server metrics from
+        this device.</p>
+      </li>
+    </ol></section></refbody></reference>

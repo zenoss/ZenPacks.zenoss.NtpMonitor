@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE map
+  PUBLIC "urn:pubid:zenoss.com:doctypes:dita:dtd:map" "map.dtd">
+<map>
+   <title>NtpMonitor</title>
+   <topicref href="topics/NtpMonitor.dita">
+      <topicref href="topics/NtpMonitor_topic-Prerequisites.dita"/>
+      <topicref href="topics/NtpMonitor_topic-Enable-Monitoring.dita"/>
+      <topicref href="topics/NtpMonitor_topic-Daemons.dita"/>
+   </topicref>
+</map>

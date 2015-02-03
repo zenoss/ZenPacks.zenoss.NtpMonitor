@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE reference PUBLIC "urn:pubid:zenoss.com:doctypes:dita:dtd:reference" "reference.dtd">
+<reference id="referenceid">
+  <title>(NtpMonitor) NTP Monitor</title>
+  <shortdesc>The <zenpack>ZenPacks.zenoss.NtpMonitor</zenpack> ZenPack monitors the difference between the system time a server 
+    is using and the time a Network Time Protocol (NTP) server is reporting.</shortdesc>
+  <refbody>
+  </refbody>
+</reference>
