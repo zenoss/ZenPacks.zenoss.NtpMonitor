@@ -1,0 +1,18 @@
+This ZenPack monitors the difference between the system time a server is using and the time a Network Time Protocol (NTP) server is reporting.
+
+== Usage ==
+
+The NTPMonitor template must be bound to the device class or device you want to monitor.
+
+1. Select Infrastructure from the navigation bar.
+2. Click the device name in the device list.
+3. Expand Monitoring Templates, and then select Device from the left panel.
+4. Select Bind Templates from the Action menu.appears.
+5. Add the NTPMonitor template to the list of selected templates, and then click Submit.
+
+The NTPMonitor template is added to the list of monitoring templates. You can now start collecting the clock offset between the local host and remote NTP server.
+
+== Changes ==
+
+;2.2.1
+* Switched from check_ntp_peer to check_ntp_offset. (ZEN-15833)
