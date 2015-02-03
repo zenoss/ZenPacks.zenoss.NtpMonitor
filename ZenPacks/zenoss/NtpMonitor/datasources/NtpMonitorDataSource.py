@@ -78,7 +78,7 @@ class NtpMonitorDataSource(ZenPackPersistence, RRDDataSource.RRDDataSource):
         return True
 
     def getCommand(self, context):
-        parts = [binPath('check_ntp_peer')]
+        parts = [binPath('check_ntp_time')]
         if self.hostname:
             parts.append('-H %s' % self.hostname)
         elif context.manageIp:
