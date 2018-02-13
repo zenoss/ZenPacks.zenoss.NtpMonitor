@@ -1,114 +1,163 @@
 ##############################################################################
-# 
-# Copyright (C) Zenoss, Inc. 2007, all rights reserved.
-# 
+#
+# Copyright (C) Zenoss, Inc. 2018, all rights reserved.
+#
 # This content is made available according to terms specified in
 # License.zenoss under the directory where your Zenoss product is installed.
-# 
+#
 ##############################################################################
 
-
-__doc__='''NtpMonitorDataSource.py
+"""
+NtpMonitorDataSource.py
 
 Defines datasource for NtpMonitor
-'''
+"""
 
-import Products.ZenModel.RRDDataSource as RRDDataSource
-from Products.ZenModel.ZenPackPersistence import ZenPackPersistence
-from AccessControl import ClassSecurityInfo, Permissions
-from Products.ZenUtils.Utils import binPath
+import logging
+import socket
+from twisted.internet.defer import inlineCallbacks, returnValue
+from ZenPacks.zenoss.PythonCollector.datasources.PythonDataSource import \
+    PythonDataSource, PythonDataSourcePlugin
+from ZenPacks.zenoss.NtpMonitor.ntp import NTPPeerChecker, NTPException, \
+    STATUS_TABLE, STATE_UNKNOWN, STATE_CRITICAL, STATE_WARNING
+from Products.ZenEvents import ZenEventClasses
 
 
-class NtpMonitorDataSource(ZenPackPersistence, RRDDataSource.RRDDataSource):
+log = logging.getLogger("zen.NtpMonitor")
 
-    ZENPACKID = 'ZenPacks.zenoss.NtpMonitor'
-    NTP_MONITOR = 'NtpMonitor'
-    
-    parser = 'Nagios'
+
+class NtpMonitorDataSource(PythonDataSource):
+    """
+    Ntp data source plugin.
+    """
+
+    ZENPACKID = "ZenPacks.zenoss.NtpMonitor"
+    NTP_MONITOR = "NtpMonitor"
 
     sourcetypes = (NTP_MONITOR,)
     sourcetype = NTP_MONITOR
 
+    plugin_classname = "ZenPacks.zenoss.NtpMonitor.datasources." \
+                       "NtpMonitorDataSource.NtpMonitorDataSourcePlugin"
+
     timeout = 60
-    eventClass = '/Status/Ntp'
-        
-    hostname = '${dev/id}'
+    eventClass = "/Status/Ntp"
+
+    hostname = "${dev/id}"
     port = 123
-    warning = ''
-    critical = ''
+    warning = ""
+    critical = ""
 
-    _properties = RRDDataSource.RRDDataSource._properties + (
-        {'id':'hostname', 'type':'string', 'mode':'w'},
-        {'id':'port', 'type':'int', 'mode':'w'},
-        {'id':'warning', 'type':'string', 'mode':'w'},
-        {'id':'critical', 'type':'string', 'mode':'w'},
-        {'id':'timeout', 'type':'int', 'mode':'w'},
-        )
-        
-    _relations = RRDDataSource.RRDDataSource._relations + (
-        )
-
-
-    factory_type_information = ( 
-    { 
-        'immediate_view' : 'editNtpMonitorDataSource',
-        'actions'        :
-        ( 
-            { 'id'            : 'edit',
-              'name'          : 'Data Source',
-              'action'        : 'editNtpMonitorDataSource',
-              'permissions'   : ( Permissions.view, ),
-            },
-        )
-    },
+    _properties = PythonDataSource._properties + (
+        {"id": "hostname", "type": "string", "mode": "w"},
+        {"id": "port", "type": "int", "mode": "w"},
+        {"id": "warning", "type": "string", "mode": "w"},
+        {"id": "critical", "type": "string", "mode": "w"},
+        {"id": "timeout", "type": "int", "mode": "w"},
     )
 
-    security = ClassSecurityInfo()
 
-    def __init__(self, id, title=None, buildRelations=True):
-        RRDDataSource.RRDDataSource.__init__(self, id, title, buildRelations)
-        #self.addDataPoints()
+class NtpMonitorDataSourcePlugin(PythonDataSourcePlugin):
 
-    def getDescription(self):
-        if self.sourcetype == self.NTP_MONITOR:
-            return self.hostname
-        return RRDDataSource.RRDDataSource.getDescription(self)
+    @classmethod
+    def params(cls, datasource, context):
+        params = {
+            "hostname": datasource.talesEval(datasource.hostname, context),
+            "port": datasource.talesEval(datasource.port, context),
+            "warning": datasource.talesEval(datasource.warning, context),
+            "critical": datasource.talesEval(datasource.critical, context),
+            "timeout": datasource.talesEval(datasource.timeout, context),
+            "eventKey": datasource.talesEval(datasource.eventKey, context),
+            "eventClass": datasource.talesEval(datasource.eventClass, context)
+        }
+        return params
 
-    def useZenCommand(self):
-        return True
+    @inlineCallbacks
+    def collect(self, config):
+        ds0 = config.datasources[0]
+        hostname = ds0.params["hostname"]
+        port = ds0.params["port"]
+        timeout = ds0.params["timeout"]
+        warning = ds0.params["warning"]
+        critical = ds0.params["critical"]
 
-    def getCommand(self, context):
-        parts = [binPath('check_ntp_peer')]
-        if self.hostname:
-            parts.append('-H %s' % self.hostname)
-        elif context.manageIp:
-            parts.append('-H %s' % context.manageIp)
+        data = self.new_data()
+
+        try:
+            result = {}
+            checker = NTPPeerChecker(
+                version=2, host=hostname, port=port, timeout=timeout,
+                warning=warning, critical=critical
+            )
+            # setup socket and set timeout
+            checker.setup_socket()
+            peers_to_check = yield checker.readstat_exchange()
+            # number of candidates for READVAR requests
+            peer_candidates = 0
+            log.debug("Processing READSTAT responses for %d peers.", len(peers_to_check))
+            for peer, peer_status in peers_to_check.iteritems():
+                # check clock selection flag, bits 6-8
+                # 0x02 PEER TRUECHIMER
+                # 0x04 PEER INCLUDED
+                # 0x06 PEER SYNCSOURCE
+                clock_select = peer_status >> 8 & 0x07
+                if clock_select == 6:
+                    checker.min_peer_source = 6
+                    checker.sync_source = True
+                    log.debug("Synchronization source found, peer: %d", peer)
+                    peer_candidates += 1
+                elif clock_select == 4:
+                    peer_candidates += 1
+            log.debug("%d candidate peers available", peer_candidates)
+            checker.update_readstat_status()
+            result = yield checker.readvar_exchange(peers_to_check)
+        except socket.timeout:
+            result["timeout"] = "NTP CRITICAL: Timeout. No response from NTP server."
+        except NTPException as ex:
+            result["exception"] = "NTP CRITICAL: " + ex.message
+        finally:
+            checker.socket.close()
+
+        self.process_result(config, ds0, result, data)
+
+        returnValue(data)
+
+    def process_result(self, config, datasource, result, data):
+        event_key = datasource.eventKey or "NtpMonitor"
+        severity = ZenEventClasses.Error
+
+        if result.get("timeout", None):
+            output = result["timeout"]
+        elif result.get("exception", None):
+            output = result["exception"]
         else:
-            raise Exception("No host value for NTP check '%s'" % context.id)
+            if result["offset_result"] == STATE_UNKNOWN:
+                result["status"] = STATE_CRITICAL
+            output = STATUS_TABLE.get(result["status"], "NTP UNKNOWN:")
+            if not result["sync_source"]:
+                output += " Server not synchronized"
+            elif result["li_alarm"]:
+                output += " Server has the LI_ALARM bit set"
+            if result["offset_result"] == STATE_UNKNOWN:
+                output += " Offset unknown"
+            elif result["status"] == STATE_WARNING:
+                output += " Offset %.10g secs (WARNING)" % result["offset"]
+            elif result["status"] == STATE_CRITICAL:
+                output += " Offset %.10g secs (CRITICAL)" % result["offset"]
+            else:
+                output += " Offset %.10g secs" % result["offset"]
+            if result["offset_result"] != STATE_UNKNOWN:
+                output += "|offset=%.10gs;%.6f;%.6f;" % (
+                    result["offset"], datasource.params["warning"], datasource.params["critical"]
+                )
+                severity = ZenEventClasses.Clear
+                data["values"][None]["offset"] = result["offset"]
 
-        if self.timeout:
-            parts.append('-t %s' % self.timeout)
-        if self.warning:
-            parts.append('-w %s' % self.warning)
-        if self.critical:
-            parts.append('-c %s' % self.critical)
-        cmd = ' '.join(parts)
-        cmd = RRDDataSource.RRDDataSource.getCommand(self, context, cmd)
-        return cmd
-
-    def checkCommandPrefix(self, context, cmd):
-        return cmd
-
-    def addDataPoints(self):
-        if not hasattr(self.datapoints, 'offset'):
-            self.manage_addRRDDataPoint('offset')
-
-    def zmanage_editProperties(self, REQUEST=None):
-        '''validation, etc'''
-        if REQUEST:
-            # ensure default datapoint didn't go away
-            self.addDataPoints()
-            # and eventClass
-            if not REQUEST.form.get('eventClass', None):
-                REQUEST.form['eventClass'] = self.__class__.eventClass
-        return RRDDataSource.RRDDataSource.zmanage_editProperties(self, REQUEST)
+        data["events"].append({
+            "eventKey": event_key,
+            "summary": output,
+            "message": output,
+            "device": config.id,
+            "eventClass": datasource.eventClass,
+            "severity": severity
+        })
