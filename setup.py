@@ -49,7 +49,7 @@ setup(
     # with the binary egg.
     package_data = { 
          '': ['*.txt'],
-         NAME: ['objects/*','skins/*/*','services/*', 'reports/*/*',
+         NAME: ['skins/*/*','services/*', 'reports/*/*',
                 'modeler/*/*', 'daemons/*', 'lib/*', 'libexec/*'],
          },  
 

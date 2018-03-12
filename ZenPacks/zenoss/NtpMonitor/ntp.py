@@ -334,15 +334,14 @@ class NTPPeerChecker(object):
     @inlineCallbacks
     def readstat_exchange(self):
         peers_to_check = {}
-        self.sequence_counter += 1
+        self.sequence_counter += 1        
         packet = NTPPacket(self.version, sequence=self.sequence_counter)
+        self.send_packet(packet.to_data_readstat())
+        log.debug("READSTAT request was sent to host %s", self.host)
         more_packets = True
         while more_packets:
-            self.send_packet(packet.to_data_readstat())
-            log.debug("READSTAT request was sent to host %s", self.host)
-            response_data, src_addr = self.socket.recvfrom(256)
-            log.debug("READSTAT response was received from host %s", self.host)
-            more_packets = False
+            response_data, src_addr = self.socket.recvfrom(MAX_CM_SIZE)
+            log.debug("READSTAT response was received from host %s", self.host)            
             if self.check_packet_source(src_addr):
                 response_packet = NTPPacket(self.version)
                 response_packet.from_data(response_data)
@@ -373,38 +372,43 @@ class NTPPeerChecker(object):
 
     @inlineCallbacks
     def readvar_exchange(self, peers_to_check):
+        self.sequence_counter += 1
+        getvar = "offset"
         for peer, peer_status in peers_to_check.iteritems():
             # query if status is >= min_peer_source
             clock_select = peer_status >> 8 & 0x07
             if clock_select >= self.min_peer_source:
                 log.debug("Getting offset for peer %d", peer)
-                self.sequence_counter += 1
                 readvar_packet = NTPPacket(
                     version=self.version, sequence=self.sequence_counter, opcode=2
                 )
+                # set peer for which data will be requested -> guaranteed single packet in response
                 readvar_packet.assoc = peer
-                readvar_packet.data = "offset"
+                readvar_packet.data = getvar
                 readvar_packet.count = len(readvar_packet.data)
                 self.send_packet(readvar_packet.to_data_readvar())
-                readvar_data, src_addr = self.socket.recvfrom(256)
+                readvar_data, src_addr = self.socket.recvfrom(MAX_CM_SIZE)
                 if not self.check_packet_source(src_addr):
                     raise NTPException("Invalid packet received from NTP server")
                 readvar_packet.from_data(readvar_data)
                 if not self.is_response(readvar_packet.opcode):
                     raise NTPException("Invalid packet received from NTP server")
                 if readvar_packet.check_error_bit():
-                    log.debug("Error bit set in packet, trying to get all possible values")
-                    self.sequence_counter += 1
-                    readvar_packet.sequence = self.sequence_counter
-                    readvar_packet.data = ""
-                    readvar_packet.count = len(readvar_packet.data)
-                    self.send_packet(readvar_packet.to_data_readvar())
-                    readvar_data, src_addr = self.socket.recvfrom(256)
-                    if not self.check_packet_source(src_addr):
-                        raise NTPException("Invalid packet received from NTP server")
-                    readvar_packet.from_data(readvar_data)
-                    if readvar_packet.check_error_bit() \
-                            or not self.is_response(readvar_packet.opcode):
+                    # try to get all possible values, omit if this was already performed
+                    if getvar:
+                        log.debug("Error bit set in packet, trying to get all possible values")
+                        getvar = ""
+                        readvar_packet.data = getvar
+                        readvar_packet.count = len(readvar_packet.data)
+                        self.send_packet(readvar_packet.to_data_readvar())
+                        readvar_data, src_addr = self.socket.recvfrom(MAX_CM_SIZE)
+                        if not self.check_packet_source(src_addr):
+                            raise NTPException("Invalid packet received from NTP server")
+                        readvar_packet.from_data(readvar_data)
+                        if readvar_packet.check_error_bit() \
+                                or not self.is_response(readvar_packet.opcode):
+                            raise NTPException("Invalid packet received from NTP server")
+                    else:
                         raise NTPException("Invalid packet received from NTP server")
                 if readvar_packet.count != 0:
                     # get data field (ASCII) and strip whitespaces, newlines symbols etc.
@@ -423,5 +427,5 @@ class NTPPeerChecker(object):
                             self.offset_result = STATE_OK
         self.status = self.process_offset()
         self.status = self.max_status()
-        result = yield self.result_to_dict()
+        result = self.result_to_dict()
         returnValue(result)
