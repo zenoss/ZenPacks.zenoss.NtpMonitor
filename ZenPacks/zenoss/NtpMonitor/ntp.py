@@ -7,23 +7,28 @@
 #
 ##############################################################################
 
-import socket
+"""
+Contains logic for NTP protocol.
+"""
+
 import struct
 import logging
-from twisted.internet.defer import returnValue, inlineCallbacks
+from twisted.internet.defer import succeed, fail
+from twisted.internet.protocol import DatagramProtocol
+from twisted.internet import reactor
 from Products.ZenUtils import IpUtil
 
 
 log = logging.getLogger("zen.NtpMonitor")
 
-LEAP_TABLE = {
+LEAP_MAP = {
     0: "NO WARNING",
     1: "EXTRA SEC",  # last minute "has" 61 seconds
     2: "MISSING SEC",  # last minute "has" 59 seconds
     3: "ALARM"  # clock not synchronized
 }
 
-STATUS_TABLE = {
+STATUS_MAP = {
     0: "NTP OK:",
     1: "NTP UNKNOWN:",
     2: "NTP WARNING:",
@@ -36,30 +41,55 @@ STATE_UNKNOWN = 1
 STATE_WARNING = 2
 STATE_CRITICAL = 3
 
-# max size of control message
-MAX_CM_SIZE = 468
 
-
-class NTPException(Exception):
+class NtpException(Exception):
     """
     Exception raised by NTP related classes.
     """
     pass
 
 
-class NTPPacket(object):
+class NtpController(object):
     """
-    Class which represents NTP packet. Contains methods for converting
-    data to/from binary format.
+    Controls the process of executing NTP protocol.
+    """
+    def __init__(self):
+        self.port = None
+
+    def start(self, protocol):
+        """
+        Execute NTP protocol
+        :param protocol: instance of NtpProtocol
+        """
+        if IpUtil.get_ip_version(protocol.host) == 6:
+            self.port = reactor.listenUDP(0, protocol, interface='::')
+        else:
+            self.port = reactor.listenUDP(0, protocol)
+
+    def success(self, data):
+        self.port.stopListening()
+        return succeed(data)
+
+    def failure(self, err):
+        self.port.stopListening()
+        return fail(err)
+
+
+class NtpPacket(object):
+    """
+    Represents NTP packet. Contains methods for converting
+    data to/from binary format and checking flags.
     """
 
     _BASE_FIELDS = "!B B 5H"
     _DATA = "!{0}s"
     _PADDING = "!{0}B"
 
+    MAX_CM_SIZE = 468
+
     def __init__(self, version=2, opcode=1, sequence=1):
         """
-        Initialize NTPPacket.
+        Initialize NtpPacket.
         :param version: version number of NTP protocol
         :param opcode: type of the REQUEST (0x01 READSTAT, 0x02 READVAR)
         :param sequence: ordinal of packet during exchange
@@ -73,10 +103,11 @@ class NTPPacket(object):
         self.assoc = 0
         self.offset = 0
         self.count = 0
-        self.error_bit = 0  # 1 if packet was received with error bit
+        self.errorBit = 0
         self.data = None
+        self._peerData = None
 
-    def to_data_readstat(self):
+    def toDataReadstat(self):
         """
         Converts data required by READSTAT request into binary format.
         :return: binary format of NTP READSTAT packet.
@@ -86,7 +117,7 @@ class NTPPacket(object):
             try:
                 # pack: 2 x 1 byte, 5 x 2 bytes
                 packed = struct.pack(
-                    NTPPacket._BASE_FIELDS,
+                    NtpPacket._BASE_FIELDS,
                     # masks for first byte:
                     # - leap: 11000000
                     # - version: 00111000
@@ -104,12 +135,15 @@ class NTPPacket(object):
                     self.count
                 )
             except struct.error:
-                raise NTPException("NTPPacket's fields parsing error.")
+                log.debug("Problem with parsing packet's data")
+                raise NtpException("Invalid packet received from NTP server")
             return packed
         else:
-            raise NTPException("Version %i of NTP protocol is not implemented." % self.version)
+            raise NtpException(
+                "Version %i of NTP protocol is not implemented" % self.version
+            )
 
-    def to_data_readvar(self):
+    def toDataReadvar(self):
         """
         Converts data required by READVAR request into binary format.
         :return: binary format of NTP READVAR packet.
@@ -119,7 +153,7 @@ class NTPPacket(object):
             try:
                 # unpack: 2 x 1 byte, 5 x 2 bytes, len(self.data) x 1 byte
                 packed = struct.pack(
-                    NTPPacket._BASE_FIELDS,
+                    NtpPacket._BASE_FIELDS,
                     (
                         (self.leap << 6 & 0xc0) |
                         (self.version << 3 & 0x38) |
@@ -132,120 +166,179 @@ class NTPPacket(object):
                     self.offset,
                     self.count
                 )
-                # add data
-                packed += struct.pack(NTPPacket._DATA.format(len(self.data)), self.data)
-                # padding with 0 if self.count is not multiple of 12
+                packed += struct.pack(
+                    NtpPacket._DATA.format(len(self.data)), self.data
+                )
                 padding = ''
                 if self.count % 12 != 0:
-                    to_pad = 12 - (self.count - 12 * int(self.count/12))
-                    for _ in range(0, to_pad):
+                    toPad = 12 - (self.count - 12 * int(self.count / 12))
+                    for _ in range(0, toPad):
                         padding += struct.pack("!B", 0)
                 packed += padding
             except struct.error:
-                raise NTPException("NTPPacket's fields parsing error.")
+                log.debug("Problem with parsing packet's data")
+                raise NtpException("Invalid packet received from NTP server")
             return packed
         else:
-            raise NTPException("Version %i of NTP protocol is not implemented." % self.version)
+            raise NtpException(
+                "Version %i of NTP protocol is not implemented" % self.version
+            )
 
-    def from_data(self, data):
+    @classmethod
+    def fromData(cls, data):
         """
-        Extract values from binary data to NTPPacket's fields.
+        Creates NtpPacket, extracts values from binary data to packet's fields and return NtpPacket instance.
         :param data: binary data
+        :return: NtpPacket with extracted data
+        :rtype: NtpPacket
         """
         try:
             unpacked = struct.unpack(
-                NTPPacket._BASE_FIELDS,
-                data[0:struct.calcsize(NTPPacket._BASE_FIELDS)]
+                NtpPacket._BASE_FIELDS,
+                data[0:struct.calcsize(NtpPacket._BASE_FIELDS)]
             )
         except struct.error:
-            log.debug("Error during extracting data from NTP packet.")
-            raise NTPException("Invalid packet received from NTP server")
-        self.leap = unpacked[0] >> 6 & 0x03
-        self.version = unpacked[0] >> 3 & 0x07
-        self.mode = unpacked[0] & 0x07
-        self.opcode = unpacked[1]
-        self.sequence = unpacked[2]
-        self.status = unpacked[3]
-        self.assoc = unpacked[4]
-        self.offset = unpacked[5]
-        self.count = unpacked[6]
+            log.debug("Error during extracting data from NTP packet")
+            raise NtpException("Invalid packet received from NTP server")
 
-    def extract_peers(self, data):
+        packet = cls()
+        packet.leap = unpacked[0] >> 6 & 0x03
+        packet.version = unpacked[0] >> 3 & 0x07
+        packet.mode = unpacked[0] & 0x07
+        packet.opcode = unpacked[1]
+        packet.sequence = unpacked[2]
+        packet.status = unpacked[3]
+        packet.assoc = unpacked[4]
+        packet.offset = unpacked[5]
+        packet.count = unpacked[6]
+        if packet.count >= 4:
+            packet._peerData = data[12:]
+
+        return packet
+
+    @property
+    def peers(self):
         """
         Extract data about peers from NTP packet's data field.
         Pair of 2 bytes per one peer.
-        :param data: binary data
         """
         peers = {}
-        if self.count >= 4:
+        if self._peerData:
             try:
-                # count is a number of bytes in DATA field
-                unpacked = struct.unpack('!{0}H'.format(self.count/2), data)
+                unpacked = struct.unpack('!{0}H'.format(self.count / 2), self._peerData)
             except struct.error:
-                log.debug("Error during extracting data from NTP packet.")
-                raise NTPException("Invalid packet received from NTP server")
-            for peer in range(0, len(unpacked)/2, 2):
-                peers[unpacked[peer]] = unpacked[peer+1]
+                log.debug("Error during extracting data from NTP packet")
+                raise NtpException("Invalid packet received from NTP server")
+            for peer in range(0, len(unpacked) / 2, 2):
+                peers[unpacked[peer]] = unpacked[peer + 1]
         return peers
 
-    def check_error_bit(self):
-        self.error_bit = self.opcode >> 6 & 0x01
-        if self.error_bit:
-            log.debug("Error bit set in packet")
-            return True
-        return False
+    @property
+    def hasError(self):
+        """
+        Check if error bit is set inside packet.
+        """
+        return bool((self.opcode >> 6) & 0x01)
+
+    @property
+    def hasAlarm(self):
+        """
+        Check if alarm bit is set in leap indicator.
+        """
+        return bool(self.leap == 3)
+
+    @property
+    def hasMaxSize(self):
+        """
+        Check if packet exceeds max specified size.
+        """
+        return bool(self.count > self.MAX_CM_SIZE)
+
+    @property
+    def hasMorePackets(self):
+        """
+        Check if packet has 'more packets' bit set.
+        Server has more data prepared if this flag is active.
+        """
+        return bool((self.opcode >> 5) & 0x01)
+
+    @property
+    def isResponse(self):
+        """
+        Check if packet has response bit set (0x02).
+        """
+        return bool((self.opcode >> 1) & 0x01)
+
+    def getPeerOffset(self):
+        if self._peerData:
+            peerData = self._peerData[:self.count].strip().replace(" ", "")
+            peerDataDict = {
+                key: value for key, value
+                in [d.split("=") for d in peerData.split(",")]
+            }
+            tmpOffset = peerDataDict.get("offset", None)
+            if tmpOffset:
+                return float(tmpOffset) / 1000
 
 
-class NTPPeerChecker(object):
+class NtpProtocol(DatagramProtocol):
     """
-    Contains logic for checking NTP peers.
+    Logic for NTP protocol.
     """
-
     port = 123
     timeout = 60.0
-    warning = 60
-    critical = 120
+    warning = 60.0
+    critical = 120.0
 
-    def __init__(self, version=2, host=None, port=None, timeout=None, warning=None, critical=None):
+    def __init__(self, host=None, port=None, timeout=None, warning=None,
+                 critical=None, version=2):
         """
-        Initialize NTPPeerChecker class.
-        :param version: version number of NTP protocol
-        :param host: target host
-        :param port: exposed port, 123 by default
-        :param timeout: timeout for full exchange, 60 seconds by default
+        Initialize NtpProtocol class.
+        :param host: targeted host
+        :param port: exposed server's port, 123 by default
+        :param timeout: timeout for socket's calls, 60 seconds by default
         :param warning: value causes warning status, 60 seconds by default
         :param critical: value causes critical status, 120 seconds by default
+        :param version: version number of NTP protocol
         """
-        if not host:
-            raise NTPException("Host is not specified. Unable to create NTPPeerChecker instance.")
         self.host = host
         if port:
-            try:
-                self.port = int(port)
-            except ValueError:
-                log.debug("Wrong value for port is specified. Using default: %i.", self.port)
-        self.version = version
+            self.parsePort(port)
         if timeout:
-            try:
-                self.timeout = float(timeout)
-            except ValueError:
-                log.debug("Unable to parse Timeout set to default value: %ds.", self.timeout)
-        self.parse_thresholds(warning, critical)
-        # socket section
-        self.socket = None
-        self.sockaddr = None
-        # flags and settings
-        self.sequence_counter = 0
-        self.li_alarm = False  # set to True if alarm bit is set
-        self.min_peer_source = 4  # peer included
+            self.parseTimeout(timeout)
+        self.parseThresholds(warning, critical)
+        self.version = version
+        self.peersToCheck = {}
+        self.readstat = True
+        self.sequenceCounter = 1
+        self.getvar = "offset"
+        self.minPeerSource = 4  # peer included
+        self.currentPeer = None
         self.status = STATE_OK
-        self.offset_result = STATE_UNKNOWN
+        self.offsetResult = STATE_UNKNOWN
         self.offset = 0
-        self.sync_source = False  # set to True if synchronization source was found
+        self.syncSource = False
+        self.liAlarm = False
+        self.d = None
+        self.timeoutCall = None
 
-    def parse_thresholds(self, warning, critical):
+    def parsePort(self, port):
+        try:
+            self.port = int(port)
+        except ValueError:
+            log.debug("Wrong value for port is specified. Using default: %i",
+                      self.port)
+
+    def parseTimeout(self, timeout):
+        try:
+            self.timeout = float(timeout)
+        except ValueError:
+            log.debug("Unable to parse timeout's value. Using default: %.2fs",
+                      self.timeout)
+
+    def parseThresholds(self, warning, critical):
         """
-        Set limits for offset from provided values.
+        Set limits for received offset from provided values.
         """
         if warning:
             try:
@@ -258,35 +351,23 @@ class NTPPeerChecker(object):
             except ValueError:
                 pass
 
-    def setup_socket(self):
+    def updateOffset(self, tmpOffset):
         """
-        Create socket and set timeout.
+        Update final offset under certain conditions.
+        :param tmpOffset: peer's offset value
         """
-        if self.socket is None:
-            try:
-                if IpUtil.get_ip_version(self.host) == 4:
-                    self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                elif IpUtil.get_ip_version(self.host) == 6:
-                    self.socket = socket.socket(
-                        socket.AF_INET6, socket.SOCK_DGRAM)
-            except socket.error:
-                raise NTPException("Error during opening socket.")
+        if self.offsetResult == STATE_UNKNOWN \
+                or abs(tmpOffset) < abs(self.offset):
+            self.offset = tmpOffset
+            self.offsetResult = STATE_OK
 
-        self.sockaddr = socket.getaddrinfo(self.host, self.port)[0][4]
-        log.debug("Socket address (sockaddr): %s", self.sockaddr)
-
-        self.socket.settimeout(self.timeout)
-        log.debug("Timeout for socket is set to %ds", self.timeout)
-
-    def send_packet(self, data):
-        self.socket.sendto(data, (self.host, self.port))
-
-    def process_offset(self):
+    def processOffset(self):
         """
         Compare offset to limits and return appropriate status.
         :return: state of status after processing
+        :rtype: int
         """
-        if self.offset_result == STATE_UNKNOWN:
+        if self.offsetResult == STATE_UNKNOWN:
             return STATE_UNKNOWN
         if self.offset > self.critical:
             return STATE_CRITICAL
@@ -294,138 +375,222 @@ class NTPPeerChecker(object):
             return STATE_WARNING
         return STATE_OK
 
-    def max_status(self):
-        return max(self.status, self.offset_result)
+    def getMaxStatus(self):
+        return max(self.status, self.offsetResult)
 
-    def update_readstat_status(self):
-        if not self.sync_source:
+    def getClockStatus(self, peerStatus):
+        """
+        Return clock's status of NTP server.
+        Possible values:
+        * 0x06 PEER SYNCSOURCE
+        * 0x04 PEER INCLUDED
+        * 0x02 PEER TRUECHIMER
+        :param peerStatus: received peer's status
+        :return: clock's status
+        :rtype: int
+        """
+        return (peerStatus >> 8) & 0x07
+
+    def startProtocol(self):
+        if not self.host:
+            self.d.errback(NtpException("Host is not specified"))
+            return
+        self.transport.connect(self.host, self.port)
+        log.debug("Protocol started for %s on port %d", self.host, self.port)
+        self.sendReadstatRequest()
+
+    def timeoutHandler(self):
+        log.info("Timeout. No response from NTP server after %.2fs",
+                 self.timeout)
+        self.d.errback(NtpException("Timeout. No response from NTP server"))
+
+    def datagramReceived(self, data, addr):
+        log.debug("Datagram received from %s", addr)
+        if self.timeoutCall.active():
+            log.debug("Timeout was in active state, disabling")
+            self.timeoutCall.cancel()
+        if self.readstat:
+            self.processReadstatResponse(data, addr)
+        else:
+            self.processReadvarResponse(data, addr)
+
+    def connectionRefused(self):
+        self.d.errback(NtpException("Connection refused"))
+
+    def updateReadstatStatus(self):
+        if not self.syncSource:
             self.status = STATE_WARNING
-        if self.li_alarm:
+        if self.liAlarm:
             self.status = STATE_WARNING
 
-    def check_packet_source(self, src_addr):
-        if src_addr[0] != self.sockaddr[0]:
-            log.debug("Invalid packet. Server address doesn't match.")
-            return False
-        return True
+    def checkCandidates(self):
+        """
+        Check if NTP server sent proper candidates to ask for NTP's offset.
+        """
+        peerCandidates = 0
+        log.debug("Processing READSTAT responses for %d peers",
+                  len(self.peersToCheck))
+        for peer, peerStatus in self.peersToCheck.iteritems():
+            clockSelect = self.getClockStatus(peerStatus)
+            if clockSelect == 6:  # 0x06 PEER SYNCSOURCE
+                self.minPeerSource = 6
+                self.syncSource = True
+                log.debug("Synchronization source found, peer: %d", peer)
+                peerCandidates += 1
+            elif clockSelect == 4:  # 0x04 PEER INCLUDED
+                peerCandidates += 1
+        log.debug("%d candidate peers available", peerCandidates)
+        self.updateReadstatStatus()
 
-    def is_response(self, opcode):
-        """
-        Check if received packet has response bit set (0x02).
-        """
-        return opcode >> 1 & 0x01
+    def sendReadstatRequest(self):
+        packet = NtpPacket(self.version, sequence=self.sequenceCounter)
+        try:
+            data = packet.toDataReadstat()
+        except NtpException as ntpEx:
+            self.d.errback(ntpEx)
+            return
+        self.transport.write(data)
+        self.timeoutCall = reactor.callLater(
+            self.timeout, self.timeoutHandler
+        )
+        log.debug("READSTAT request was sent to host %s", self.host)
 
-    def more_packets(self, opcode):
+    def controlReadvarExchange(self):
         """
-        Check if server has more packets to send.
+        Controls process of READVAR exchange.
         """
-        return opcode >> 5 & 0x01
+        if self.peersToCheck:
+            peer, peerStatus = self.peersToCheck.popitem()
+            clockSelect = self.getClockStatus(peerStatus)
+            if clockSelect >= self.minPeerSource:
+                self.currentPeer = peer
+                self.sendReadvarRequest()
+        else:
+            self.status = self.processOffset()
+            self.status = self.getMaxStatus()
+            data = self.getResult()
+            self.d.callback(data)
 
-    def result_to_dict(self):
+    def processReadstatResponse(self, data, addr):
+        log.debug("READSTAT response was received from %s", addr)
+        try:
+            packet = NtpPacket.fromData(data)
+        except NtpException as ntpEx:
+            self.d.errback(ntpEx)
+            return
+        if packet.hasMaxSize:
+            log.debug("Invalid READSTAT packet (MAX_CM_SIZE) "
+                      "was received from host %s", self.host)
+            self.d.errback(
+                NtpException("Invalid packet received from NTP server")
+            )
+            return
+        if packet.sequence != self.sequenceCounter:
+            log.debug("Wrong sequence number was set in packet")
+            self.d.errback(
+                NtpException("Invalid packet received from NTP server")
+            )
+            return
+        if packet.hasError:
+            log.debug("Error bit was set in packet")
+            self.d.errback(
+                NtpException("Invalid packet received from NTP server")
+            )
+            return
+        if LEAP_MAP.get(packet.leap, None):
+            if packet.hasAlarm:
+                log.info("Leap indicator: alarm bit is set")
+                self.liAlarm = True
+        else:
+            self.d.errback(
+                NtpException("Invalid packet received from NTP server")
+            )
+            return
+        try:
+            self.peersToCheck.update(packet.peers)
+        except NtpException as ntpEx:
+            self.d.errback(ntpEx)
+            return
+        if not packet.hasMorePackets:
+            self.readstat = False
+            self.sequenceCounter += 1
+            self.checkCandidates()
+            self.controlReadvarExchange()
+
+    def sendReadvarRequest(self):
+        log.debug("Getting offset for peer %d", self.currentPeer)
+        packet = NtpPacket(
+            version=self.version, sequence=self.sequenceCounter, opcode=2
+        )
+        packet.assoc = self.currentPeer
+        packet.data = self.getvar
+        packet.count = len(packet.data)
+        try:
+            data = packet.toDataReadvar()
+        except NtpException as ntpEx:
+            self.d.errback(ntpEx)
+            return
+        self.transport.write(data)
+        self.timeoutCall = reactor.callLater(
+            self.timeout, self.timeoutHandler
+        )
+
+    def processReadvarResponse(self, data, addr):
+        log.debug("READVAR response was received from %s", addr)
+        try:
+            packet = NtpPacket.fromData(data)
+        except NtpException as ntpEx:
+            self.d.errback(ntpEx)
+            return
+        if packet.hasMaxSize:
+            log.debug("Invalid READVAR packet (MAX_CM_SIZE) "
+                      "was received from host %s", self.host)
+            self.d.errback(
+                NtpException("Invalid packet received from NTP server")
+            )
+            return
+        if packet.sequence != self.sequenceCounter:
+            log.debug("Wrong sequence number was set in packet")
+            self.d.errback(
+                NtpException("Invalid packet received from NTP server")
+            )
+            return
+        if packet.hasError:
+            if self.getvar:
+                log.debug("Error bit set in packet, trying to get "
+                          "all possible values")
+                self.getvar = ""
+                self.sendReadvarRequest()
+            else:
+                log.debug("Error bit was set in packet")
+                self.d.errback(
+                    NtpException("Invalid packet received from NTP server")
+                )
+                return
+        if not packet.isResponse:
+            self.d.errback(
+                NtpException("Invalid packet received from NTP server")
+            )
+            return
+        tmpOffset = packet.getPeerOffset()
+        if tmpOffset:
+            log.debug("Offset for peer %d: %f", self.currentPeer, tmpOffset)
+            self.updateOffset(tmpOffset)
+        self.controlReadvarExchange()
+
+    def getResult(self):
+        """
+        Return result of executing NTP protocol.
+        :return: final values after exchange
+        :rtype: dict
+        """
         result = {
             "offset": self.offset,
-            "offset_result": self.offset_result,
+            "offsetResult": self.offsetResult,
             "status": self.status,
-            "sync_source": self.sync_source,
-            "li_alarm": self.li_alarm
+            "syncSource": self.syncSource,
+            "liAlarm": self.liAlarm,
+            "warning": self.warning,
+            "critical": self.critical
         }
         return result
-
-    @inlineCallbacks
-    def readstat_exchange(self):
-        peers_to_check = {}
-        self.sequence_counter += 1        
-        packet = NTPPacket(self.version, sequence=self.sequence_counter)
-        self.send_packet(packet.to_data_readstat())
-        log.debug("READSTAT request was sent to host %s", self.host)
-        more_packets = True
-        while more_packets:
-            response_data, src_addr = self.socket.recvfrom(MAX_CM_SIZE)
-            log.debug("READSTAT response was received from host %s", self.host)            
-            if self.check_packet_source(src_addr):
-                response_packet = NTPPacket(self.version)
-                response_packet.from_data(response_data)
-                if response_packet.count > MAX_CM_SIZE:
-                    log.debug(
-                        "Invalid READSTAT packet (MAX_CM_SIZE) was received from host %s.",
-                        self.host
-                    )
-                    raise NTPException("Invalid packet received from NTP server")
-                if response_packet.check_error_bit():
-                    raise NTPException("Invalid packet received from NTP server")
-                if response_packet.sequence != self.sequence_counter:
-                    log.debug("Wrong sequence number")
-                    raise NTPException("Invalid packet received from NTP server")
-                if LEAP_TABLE.get(response_packet.leap, None):
-                    # check if alarm bit is set
-                    if response_packet.leap == 3:
-                        self.li_alarm = True
-                        log.info("Leap indicator: alarm bit is set")
-                else:
-                    raise NTPException("Invalid packet received from NTP server")
-                if not self.more_packets(response_packet.opcode):
-                    more_packets = False
-                # extract peers
-                peers_to_check.update(response_packet.extract_peers(response_data[12:]))
-        result = yield peers_to_check
-        returnValue(result)
-
-    @inlineCallbacks
-    def readvar_exchange(self, peers_to_check):
-        self.sequence_counter += 1
-        getvar = "offset"
-        for peer, peer_status in peers_to_check.iteritems():
-            # query if status is >= min_peer_source
-            clock_select = peer_status >> 8 & 0x07
-            if clock_select >= self.min_peer_source:
-                log.debug("Getting offset for peer %d", peer)
-                readvar_packet = NTPPacket(
-                    version=self.version, sequence=self.sequence_counter, opcode=2
-                )
-                # set peer for which data will be requested -> guaranteed single packet in response
-                readvar_packet.assoc = peer
-                readvar_packet.data = getvar
-                readvar_packet.count = len(readvar_packet.data)
-                self.send_packet(readvar_packet.to_data_readvar())
-                readvar_data, src_addr = self.socket.recvfrom(MAX_CM_SIZE)
-                if not self.check_packet_source(src_addr):
-                    raise NTPException("Invalid packet received from NTP server")
-                readvar_packet.from_data(readvar_data)
-                if not self.is_response(readvar_packet.opcode):
-                    raise NTPException("Invalid packet received from NTP server")
-                if readvar_packet.check_error_bit():
-                    # try to get all possible values, omit if this was already performed
-                    if getvar:
-                        log.debug("Error bit set in packet, trying to get all possible values")
-                        getvar = ""
-                        readvar_packet.data = getvar
-                        readvar_packet.count = len(readvar_packet.data)
-                        self.send_packet(readvar_packet.to_data_readvar())
-                        readvar_data, src_addr = self.socket.recvfrom(MAX_CM_SIZE)
-                        if not self.check_packet_source(src_addr):
-                            raise NTPException("Invalid packet received from NTP server")
-                        readvar_packet.from_data(readvar_data)
-                        if readvar_packet.check_error_bit() \
-                                or not self.is_response(readvar_packet.opcode):
-                            raise NTPException("Invalid packet received from NTP server")
-                    else:
-                        raise NTPException("Invalid packet received from NTP server")
-                if readvar_packet.count != 0:
-                    # get data field (ASCII) and strip whitespaces, newlines symbols etc.
-                    peer_data = readvar_data[12:(readvar_packet.count+12)].strip().replace(" ", "")
-                    peer_data_dict = {
-                        key: value for key, value in [d.split("=") for d in peer_data.split(",")]
-                    }
-                    # extract offset
-                    tmp_offset = peer_data_dict.get("offset", None)
-                    if tmp_offset:
-                        tmp_offset = float(tmp_offset) / 1000
-                        log.debug("Offset for peer %d: %f", peer, tmp_offset)
-                        if self.offset_result == STATE_UNKNOWN \
-                                or abs(tmp_offset) < abs(self.offset):
-                            self.offset = tmp_offset
-                            self.offset_result = STATE_OK
-        self.status = self.process_offset()
-        self.status = self.max_status()
-        result = self.result_to_dict()
-        returnValue(result)
