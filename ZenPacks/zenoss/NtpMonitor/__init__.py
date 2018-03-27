@@ -27,7 +27,7 @@ def onCollectorInstalled(ob, event):
     verifyBin = 'check_ntp'
     code, output = ob.executeCommand('zenbincheck %s' % verifyBin, 'zenoss', needsZenHome=True)
     if code:
-       	log.warn(errormsg.format(verifyBin, ob.hostname, zpFriendly))
+        log.warn(errormsg.format(verifyBin, ob.hostname, zpFriendly))
 
 
 zenpacklib.load_yaml()

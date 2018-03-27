@@ -105,11 +105,11 @@ class NtpPacket(object):
         self.count = 0
         self.errorBit = 0
         self.data = None
-        self._peerData = None
+        self.peerData = None
 
     def toDataReadstat(self):
         """
-        Converts data required by READSTAT request into binary format.
+        Returns this instance as a READSTAT request in binary form.
         :return: binary format of NTP READSTAT packet.
         :rtype: str
         """
@@ -135,8 +135,7 @@ class NtpPacket(object):
                     self.count
                 )
             except struct.error:
-                log.debug("Problem with parsing packet's data")
-                raise NtpException("Invalid packet received from NTP server")
+                raise NtpException("Internal packet parsing error")
             return packed
         else:
             raise NtpException(
@@ -145,13 +144,13 @@ class NtpPacket(object):
 
     def toDataReadvar(self):
         """
-        Converts data required by READVAR request into binary format.
+        Returns this instance as a READVAR request in binary form.
         :return: binary format of NTP READVAR packet.
         :rtype: str
         """
         if self.version == 2:
             try:
-                # unpack: 2 x 1 byte, 5 x 2 bytes, len(self.data) x 1 byte
+                # unpack: 2 x 1 byte, 5 x 2 bytes, self.count x 1 byte
                 packed = struct.pack(
                     NtpPacket._BASE_FIELDS,
                     (
@@ -167,7 +166,7 @@ class NtpPacket(object):
                     self.count
                 )
                 packed += struct.pack(
-                    NtpPacket._DATA.format(len(self.data)), self.data
+                    NtpPacket._DATA.format(self.count), self.data
                 )
                 padding = ''
                 if self.count % 12 != 0:
@@ -176,7 +175,6 @@ class NtpPacket(object):
                         padding += struct.pack("!B", 0)
                 packed += padding
             except struct.error:
-                log.debug("Problem with parsing packet's data")
                 raise NtpException("Invalid packet received from NTP server")
             return packed
         else:
@@ -198,7 +196,6 @@ class NtpPacket(object):
                 data[0:struct.calcsize(NtpPacket._BASE_FIELDS)]
             )
         except struct.error:
-            log.debug("Error during extracting data from NTP packet")
             raise NtpException("Invalid packet received from NTP server")
 
         packet = cls()
@@ -212,7 +209,7 @@ class NtpPacket(object):
         packet.offset = unpacked[5]
         packet.count = unpacked[6]
         if packet.count >= 4:
-            packet._peerData = data[12:]
+            packet.peerData = data[12:]
 
         return packet
 
@@ -223,9 +220,9 @@ class NtpPacket(object):
         Pair of 2 bytes per one peer.
         """
         peers = {}
-        if self._peerData:
+        if self.peerData:
             try:
-                unpacked = struct.unpack('!{0}H'.format(self.count / 2), self._peerData)
+                unpacked = struct.unpack('!{0}H'.format(self.count / 2), self.peerData)
             except struct.error:
                 log.debug("Error during extracting data from NTP packet")
                 raise NtpException("Invalid packet received from NTP server")
@@ -248,7 +245,7 @@ class NtpPacket(object):
         return bool(self.leap == 3)
 
     @property
-    def hasMaxSize(self):
+    def hasWrongSize(self):
         """
         Check if packet exceeds max specified size.
         """
@@ -270,8 +267,8 @@ class NtpPacket(object):
         return bool((self.opcode >> 1) & 0x01)
 
     def getPeerOffset(self):
-        if self._peerData:
-            peerData = self._peerData[:self.count].strip().replace(" ", "")
+        if self.peerData:
+            peerData = self.peerData[:self.count].strip().replace(" ", "")
             peerDataDict = {
                 key: value for key, value
                 in [d.split("=") for d in peerData.split(",")]
@@ -279,6 +276,22 @@ class NtpPacket(object):
             tmpOffset = peerDataDict.get("offset", None)
             if tmpOffset:
                 return float(tmpOffset) / 1000
+
+    def setPeerToRequest(self, peer):
+        """
+        Set peer for which data will be requested.
+        :param peer: peer to set
+        """
+        self.assoc = peer
+
+    def setDataToRequest(self, requestDetails):
+        """
+        Set string that specifies variables to request about.
+        Empty string for all possible values.
+        :param requestDetails: requested variables separated by commma
+        """
+        self.data = requestDetails
+        self.count = len(requestDetails)
 
 
 class NtpProtocol(DatagramProtocol):
@@ -321,18 +334,20 @@ class NtpProtocol(DatagramProtocol):
         self.liAlarm = False
         self.d = None
         self.timeoutCall = None
+        self.dataQueue = ""
+        self.dataQueueCtr = 0
 
     def parsePort(self, port):
         try:
             self.port = int(port)
-        except ValueError:
+        except (ValueError, TypeError):
             log.debug("Wrong value for port is specified. Using default: %i",
                       self.port)
 
     def parseTimeout(self, timeout):
         try:
             self.timeout = float(timeout)
-        except ValueError:
+        except (ValueError, TypeError):
             log.debug("Unable to parse timeout's value. Using default: %.2fs",
                       self.timeout)
 
@@ -343,25 +358,30 @@ class NtpProtocol(DatagramProtocol):
         if warning:
             try:
                 self.warning = float(warning)
-            except ValueError:
-                pass
+            except (ValueError, TypeError):
+                log.debug("Unable to parse warning's value. Using default: %.2fs",
+                          self.warning)
         if critical:
             try:
                 self.critical = float(critical)
-            except ValueError:
-                pass
+            except (ValueError, TypeError):
+                log.debug("Unable to parse critical's value. Using default: %.2fs",
+                          self.critical)
 
     def updateOffset(self, tmpOffset):
         """
         Update final offset under certain conditions.
         :param tmpOffset: peer's offset value
         """
-        if self.offsetResult == STATE_UNKNOWN \
-                or abs(tmpOffset) < abs(self.offset):
+
+        offsetAbs = abs(self.offset)
+        tmpOffsetAbs = abs(tmpOffset)
+
+        if self.offsetResult == STATE_UNKNOWN or tmpOffsetAbs < offsetAbs:
             self.offset = tmpOffset
             self.offsetResult = STATE_OK
 
-    def processOffset(self):
+    def getProcessedOffset(self):
         """
         Compare offset to limits and return appropriate status.
         :return: state of status after processing
@@ -466,7 +486,7 @@ class NtpProtocol(DatagramProtocol):
                 self.currentPeer = peer
                 self.sendReadvarRequest()
         else:
-            self.status = self.processOffset()
+            self.status = self.getProcessedOffset()
             self.status = self.getMaxStatus()
             data = self.getResult()
             self.d.callback(data)
@@ -478,7 +498,7 @@ class NtpProtocol(DatagramProtocol):
         except NtpException as ntpEx:
             self.d.errback(ntpEx)
             return
-        if packet.hasMaxSize:
+        if packet.hasWrongSize:
             log.debug("Invalid READSTAT packet (MAX_CM_SIZE) "
                       "was received from host %s", self.host)
             self.d.errback(
@@ -522,9 +542,8 @@ class NtpProtocol(DatagramProtocol):
         packet = NtpPacket(
             version=self.version, sequence=self.sequenceCounter, opcode=2
         )
-        packet.assoc = self.currentPeer
-        packet.data = self.getvar
-        packet.count = len(packet.data)
+        packet.setPeerToRequest(self.currentPeer)
+        packet.setDataToRequest(self.getvar)
         try:
             data = packet.toDataReadvar()
         except NtpException as ntpEx:
@@ -542,7 +561,7 @@ class NtpProtocol(DatagramProtocol):
         except NtpException as ntpEx:
             self.d.errback(ntpEx)
             return
-        if packet.hasMaxSize:
+        if packet.hasWrongSize:
             log.debug("Invalid READVAR packet (MAX_CM_SIZE) "
                       "was received from host %s", self.host)
             self.d.errback(
@@ -561,6 +580,7 @@ class NtpProtocol(DatagramProtocol):
                           "all possible values")
                 self.getvar = ""
                 self.sendReadvarRequest()
+                return
             else:
                 log.debug("Error bit was set in packet")
                 self.d.errback(
@@ -572,11 +592,19 @@ class NtpProtocol(DatagramProtocol):
                 NtpException("Invalid packet received from NTP server")
             )
             return
-        tmpOffset = packet.getPeerOffset()
-        if tmpOffset:
-            log.debug("Offset for peer %d: %f", self.currentPeer, tmpOffset)
-            self.updateOffset(tmpOffset)
-        self.controlReadvarExchange()
+        if packet.hasMorePackets:
+            self.dataQueue += packet.peerData
+            self.dataQueueCtr += packet.count
+        else:
+            packet.peerData = self.dataQueue + packet.peerData
+            packet.count += self.dataQueueCtr
+            self.dataQueue = ""
+            self.dataQueueCtr = 0
+            tmpOffset = packet.getPeerOffset()
+            if tmpOffset:
+                log.debug("Offset for peer %d: %f", self.currentPeer, tmpOffset)
+                self.updateOffset(tmpOffset)
+            self.controlReadvarExchange()
 
     def getResult(self):
         """

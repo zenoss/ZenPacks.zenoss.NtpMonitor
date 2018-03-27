@@ -35,8 +35,10 @@ class NtpMonitorDataSource(PythonDataSource):
     sourcetypes = (NTP_MONITOR,)
     sourcetype = NTP_MONITOR
 
-    plugin_classname = "ZenPacks.zenoss.NtpMonitor.datasources." \
-                       "NtpMonitorDataSource.NtpMonitorDataSourcePlugin"
+    plugin_classname = (
+        "ZenPacks.zenoss.NtpMonitor.datasources."
+        "NtpMonitorDataSource.NtpMonitorDataSourcePlugin"
+    )
 
     timeout = 60
     eventClass = "/Status/Ntp"

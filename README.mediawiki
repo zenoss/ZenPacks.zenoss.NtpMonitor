@@ -4,15 +4,22 @@ This ZenPack monitors the difference between the system time a server is using a
 
 The NTPMonitor template must be bound to the device class or device you want to monitor.
 
-1. Select Infrastructure from the navigation bar.
-2. Click the device name in the device list.
-3. Expand Monitoring Templates, and then select Device from the left panel.
-4. Select Bind Templates from the Action menu.appears.
-5. Add the NTPMonitor template to the list of selected templates, and then click Submit.
+# Select Infrastructure from the navigation bar.
+# Click the device name in the device list.
+# Expand Monitoring Templates, and then select Device from the left panel.
+# Select Bind Templates from the Action menu.appears.
+# Add the NTPMonitor template to the list of selected templates, and then click Submit.
 
 The NTPMonitor template is added to the list of monitoring templates. You can now start collecting the clock offset between the device and sync peer.
 
 == Changes ==
+
+;3.0.0
+* No longer relies on Nagios plugins to monitor NTP servers
+* Added unit tests
+* Rewritten as a PythonCollector's PythonDataSource
+* Now uses yaml definition (ZenPackLib) instead of objects.xml
+* Added IPv6 support
 
 ;2.2.1
 * Switched from check_ntp_peer to check_ntp_offset. (ZEN-15833)
