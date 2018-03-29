@@ -157,8 +157,6 @@ class TestNtpPacket(unittest.TestCase):
         packet = NtpPacket(version=2, opcode=2, sequence=2)
         packet.setDataToRequest(self.getvar)
         self.assertEqual(packet.data, self.getvar)
-        self.data = requestDetails
-        self.count = len(requestDetails)
 
     def testDataToRequestSetterDataSize(self):
         size = len(self.getvar)
