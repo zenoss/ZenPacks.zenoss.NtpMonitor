@@ -81,13 +81,12 @@ class TestNtpProtocolDynamic(unittest.TestCase):
     """
     Test exchange between NTP server and collector on dumped data.
     """
+    protocol = None
 
     def setUp(self):
         super(TestNtpProtocolDynamic, self).setUp()
-        self.protocol = NtpProtocol(host="127.0.0.1", timeout=self.timeout)
-        self.protocol.transport = TestableDatagramTransport()
 
-    def test_exchange(self):
+    def testExchange(self):
         def success(result):
             offset = 2.063
             offsetToReturn = float(offset) / 1000
@@ -102,6 +101,9 @@ class TestNtpProtocolDynamic(unittest.TestCase):
         def failure(err):
             self.fail(err.getErrorMessage())
 
+        timeout = 60.0
+        self.protocol = NtpProtocol(host="127.0.0.1", timeout=timeout)
+        self.protocol.transport = TestableDatagramTransport()
         d = Deferred()
 
         d.addCallback(success)
@@ -117,7 +119,7 @@ class TestNtpProtocolDynamic(unittest.TestCase):
 
         return d
 
-    def test_timeout(self):
+    def testTimeout(self):
         def final(err):
             errMsg = 'Timeout. No response from NTP server'
             ex = err.value
@@ -125,7 +127,7 @@ class TestNtpProtocolDynamic(unittest.TestCase):
             self.assertIsInstance(ex, NtpException)
 
         testTimeout = 0.5
-        self.protocol.timeout = testTimeout
+        self.protocol = NtpProtocol(host="127.0.0.1", timeout=testTimeout)
         self.protocol.transport = TestableDatagramTransportWithTimeout(testTimeout)
 
         d = Deferred()
@@ -444,52 +446,35 @@ class TestNtpProtocolStatic(unittest.TestCase):
         return d
 
     def testControlReadvarExchangeEmptyStatusSet(self):
-        def final(err):
-            # err is a Failure instance because of d.cancel()
-            if self.protocol.timeoutCall.active():
-                self.protocol.timeoutCall.cancel()
-            self.assertEqual(self.protocol.status, STATE_CRITICAL)
-
+        def final(result):
+            self.assertEqual(self.protocol.status, STATE_UNKNOWN)
         d = Deferred()
         d.addBoth(final)
         self.protocol.d = d
-        self.protocol.offset = 1000.0
         self.protocol.controlReadvarExchange()
         d.cancel()
 
         return d
 
     def testControlReadvarExchangePop(self):
-        self.protocol.peersToCheck = self.peersToCheck
-        self.protocol.minPeerSource = 100  # wrong value (too high)
-        self.protocol.controlReadvarExchange()
-        self.assertFalse(self.protocol.peersToCheck)
-
-    def testControlReadvarExchangeReadvarSent(self):
-        def final(err):
-            # err is a Failure instance because of d.cancel()
-            if self.protocol.timeoutCall.active():
-                self.protocol.timeoutCall.cancel()
-            self.assertTrue(self.protocol.transport.written)
+        def final(result):
+            self.assertFalse(self.protocol.peersToCheck)
 
         d = Deferred()
         d.addBoth(final)
         self.protocol.d = d
 
         self.protocol.peersToCheck = self.peersToCheck
+        self.protocol.minPeerSource = 100  # wrong value (too high)
         self.protocol.controlReadvarExchange()
         d.cancel()
 
-        return d
-
     def testControlReadvarExchangePeerSet(self):
-        peer = 58757
-
         def final(err):
             # err is a Failure instance because of d.cancel()
             if self.protocol.timeoutCall.active():
                 self.protocol.timeoutCall.cancel()
-            self.assertEqual(self.protocol.currentPeer, peer)
+            self.assertEqual(self.protocol.currentPeer, self.peer)
 
         d = Deferred()
         d.addBoth(final)
