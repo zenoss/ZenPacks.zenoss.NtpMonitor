@@ -7,8 +7,8 @@ AUTHOR = 'Zenoss'
 LICENSE = ''
 NAMESPACE_PACKAGES = ['ZenPacks', 'ZenPacks.zenoss']
 PACKAGES = ['ZenPacks', 'ZenPacks.zenoss', 'ZenPacks.zenoss.NtpMonitor']
-INSTALL_REQUIRES = ['ZenPacks.zenoss.PythonCollector']
-COMPAT_ZENOSS_VERS = '>=4.2'
+INSTALL_REQUIRES = ['ZenPacks.zenoss.PythonCollector', 'ZenPacks.zenoss.ZenPackLib']
+COMPAT_ZENOSS_VERS = '>=5.0'
 PREV_ZENPACK_NAME = ''
 # STOP_REPLACEMENTS
 ################################
