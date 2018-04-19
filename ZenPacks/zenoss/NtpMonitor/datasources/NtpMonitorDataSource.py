@@ -43,7 +43,7 @@ class NtpMonitorDataSource(PythonDataSource):
     timeout = 60
     eventClass = "/Status/Ntp"
 
-    hostname = "${dev/id}"
+    hostname = "${dev/manageIp}"
     port = 123
     warning = 60
     critical = 120
