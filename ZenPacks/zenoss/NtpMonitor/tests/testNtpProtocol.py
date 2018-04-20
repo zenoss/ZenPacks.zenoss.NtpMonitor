@@ -8,10 +8,10 @@
 ##############################################################################
 
 import Globals
+import unittest
 from Products.ZenUtils.Utils import unused
 unused(Globals)
 from ZenPacks.zenoss.NtpMonitor.ntp import *
-from twisted.trial import unittest
 from twisted.test import proto_helpers
 from twisted.internet.defer import Deferred
 
@@ -551,8 +551,8 @@ def test_suite():
     """
     from unittest import TestSuite, makeSuite
     suite = TestSuite()
-    #suite.addTest(makeSuite(TestNtpProtocolDynamic))
-    #suite.addTest(makeSuite(TestNtpProtocolStatic))
+    suite.addTest(makeSuite(TestNtpProtocolDynamic))
+    suite.addTest(makeSuite(TestNtpProtocolStatic))
     return suite
 
 if __name__ == "__main__":
