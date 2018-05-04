@@ -20,6 +20,7 @@ from ZenPacks.zenoss.PythonCollector.datasources.PythonDataSource import \
 from ZenPacks.zenoss.NtpMonitor.ntp import NtpProtocol, NtpController, \
     STATUS_MAP, STATE_UNKNOWN, STATE_CRITICAL, STATE_WARNING
 from Products.ZenEvents import ZenEventClasses
+from Products.ZenUtils.IpUtil import getHostByName
 
 
 log = logging.getLogger("zen.NtpMonitor")
@@ -43,7 +44,7 @@ class NtpMonitorDataSource(PythonDataSource):
     timeout = 60
     eventClass = "/Status/Ntp"
 
-    hostname = "${dev/manageIp}"
+    hostname = "${dev/id}"
     port = 123
     warning = 60
     critical = 120
@@ -76,7 +77,7 @@ class NtpMonitorDataSourcePlugin(PythonDataSourcePlugin):
 
     def collect(self, config):
         ds0 = config.datasources[0]
-        hostname = ds0.params["hostname"]
+        hostname = getHostByName(ds0.params["hostname"])
         port = ds0.params["port"]
         timeout = ds0.params["timeout"]
         warning = ds0.params["warning"]
