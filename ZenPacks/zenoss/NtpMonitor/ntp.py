@@ -485,6 +485,8 @@ class NtpProtocol(DatagramProtocol):
             if clockSelect >= self.minPeerSource:
                 self.currentPeer = peer
                 self.sendReadvarRequest()
+            else:
+                log.debug("clockSelect < self.minPeerSource")
         else:
             self.status = self.getProcessedOffset()
             self.status = self.getMaxStatus()
@@ -553,6 +555,8 @@ class NtpProtocol(DatagramProtocol):
         self.timeoutCall = reactor.callLater(
             self.timeout, self.timeoutHandler
         )
+        # ZPS-3520. Set self.minPeerSource to the default value.
+        self.minPeerSource = 4
 
     def processReadvarResponse(self, data, addr):
         log.debug("READVAR response was received from %s", addr)
