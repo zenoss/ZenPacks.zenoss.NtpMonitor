@@ -15,7 +15,7 @@ device_classes:
             eventKey:
             severity: 3
             cycletime: 300
-            hostname: ${dev/manageIp}
+            hostname: ${dev/id}
             port: 123
             timeout: 60
             warning: 60

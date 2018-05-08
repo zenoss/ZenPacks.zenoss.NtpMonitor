@@ -71,7 +71,8 @@ class NtpController(object):
         return succeed(data)
 
     def failure(self, err):
-        self.port.stopListening()
+        if self.port:
+            self.port.stopListening()
         return fail(err)
 
 
@@ -413,7 +414,7 @@ class NtpProtocol(DatagramProtocol):
 
     def startProtocol(self):
         if not self.host:
-            self.d.errback(NtpException("Host is not specified"))
+            self.d.errback(NtpException("Host is not specified. Please check hostname"))
             return
         self.transport.connect(self.host, self.port)
         log.debug("Protocol started for %s on port %d", self.host, self.port)
