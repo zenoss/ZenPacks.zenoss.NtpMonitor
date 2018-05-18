@@ -1,9 +1,8 @@
 NTP Monitor ZenPack
 =============================
 
-The NTPMonitor ZenPack uses the check_ntp_peer Nagios Plugin to check the offset
-with the sync peer. This plugin will not check the clock offset between the
-local host and NTP server.
+The NTPMonitor ZenPack checks the NTP offset with its sync peer. This plugin
+will not check the clock offset between the local host and NTP server.
 
 Support
 ----------
