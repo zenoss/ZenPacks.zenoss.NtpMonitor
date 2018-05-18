@@ -1,0 +1,43 @@
+name: ZenPacks.zenoss.NtpMonitor
+
+device_classes:
+  /:
+    templates:
+      NtpMonitor:
+        description: Monitors NTP offset
+        targetPythonClass: Products.ZenModel.Device
+
+        datasources:
+          NtpMonitor:
+            type: NtpMonitor
+            component: NtpMonitor
+            eventClass: /Status/Ntp
+            eventKey:
+            severity: 3
+            cycletime: 300
+            hostname: ${dev/id}
+            port: 123
+            timeout: 60
+            warning: 60
+            critical: 120
+
+            datapoints:
+              offset:
+                description: The difference between the reference time and the system clock.
+                rrdtype: GAUGE
+                isrow: true
+
+        graphs:
+          offset:
+            height: 100
+            width: 500
+
+            graphpoints:
+              offset:
+                legend: ${graphPoint/id}
+                dpName: NtpMonitor_offset
+
+event_classes:
+  /Status/Ntp:
+    remove: false
+    description: NtpMonitor EventClass
