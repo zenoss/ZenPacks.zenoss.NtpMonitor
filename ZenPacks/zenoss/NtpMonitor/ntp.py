@@ -448,18 +448,23 @@ class NtpProtocol(DatagramProtocol):
         """
         Check if NTP server sent proper candidates to ask for NTP's offset.
         """
-        peerCandidates = 0
         log.debug("Processing READSTAT responses for %d peers",
                   len(self.peersToCheck))
+        # figure out self.minPeerSource
         for peer, peerStatus in self.peersToCheck.iteritems():
             clockSelect = self.getClockStatus(peerStatus)
+            # self.minPeerSource == 4 by default
             if clockSelect == 6:  # 0x06 PEER SYNCSOURCE
                 self.minPeerSource = 6
                 self.syncSource = True
                 log.debug("Synchronization source found, peer: %d", peer)
-                peerCandidates += 1
-            elif clockSelect == 4:  # 0x04 PEER INCLUDED
-                peerCandidates += 1
+        # only include peers for which clockSelect >= self.minPeerSource
+        candidates = []
+        for peer, peerStatus in self.peersToCheck.iteritems():
+            if self.getClockStatus(peerStatus) >= self.minPeerSource:
+                candidates.append((peer, peerStatus))
+        self.peersToCheck = dict(candidates)
+        peerCandidates = len(self.peersToCheck.keys())
         log.debug("%d candidate peers available", peerCandidates)
         self.updateReadstatStatus()
 
@@ -481,13 +486,9 @@ class NtpProtocol(DatagramProtocol):
         Controls process of READVAR exchange.
         """
         if self.peersToCheck:
-            peer, peerStatus = self.peersToCheck.popitem()
-            clockSelect = self.getClockStatus(peerStatus)
-            if clockSelect >= self.minPeerSource:
-                self.currentPeer = peer
-                self.sendReadvarRequest()
-            else:
-                log.debug("clockSelect < self.minPeerSource")
+            peer, _ = self.peersToCheck.popitem()
+            self.currentPeer = peer
+            self.sendReadvarRequest()
         else:
             self.status = self.getProcessedOffset()
             self.status = self.getMaxStatus()
