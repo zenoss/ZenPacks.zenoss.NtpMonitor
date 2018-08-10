@@ -57,6 +57,10 @@ class NtpMonitorDataSource(PythonDataSource):
         {"id": "timeout", "type": "int", "mode": "w"},
     )
 
+    def addDataPoints(self):
+        if not self.datapoints._getOb('offset', None):
+            self.manage_addRRDDataPoint('offset')
+
 
 class NtpMonitorDataSourcePlugin(PythonDataSourcePlugin):
     """
