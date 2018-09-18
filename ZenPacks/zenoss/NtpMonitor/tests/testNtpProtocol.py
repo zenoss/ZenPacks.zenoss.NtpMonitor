@@ -322,7 +322,7 @@ class TestNtpProtocolStatic(unittest.TestCase):
 
     def testStartProtocolWithoutHostMsg(self):
         def final(err):
-            errMsg = "Host is not specified"
+            errMsg = "Host is not specified. Please check hostname"
             self.assertEqual(err.getErrorMessage(), errMsg)
 
         d = Deferred()
