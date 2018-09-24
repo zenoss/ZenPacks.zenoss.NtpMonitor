@@ -1,7 +1,6 @@
 Background
 ----------
-This ZenPack monitors the difference between the system time a server is
-using and the time a Network Time Protocol (NTP) server is reporting.
+This ZenPack is used to monitor the NTP offset between target NTP server on a host and it's NTP Pool sync peer.
 
 ### Prerequisites
 
